@@ -143,7 +143,7 @@ for i in range(nslc):
 # Look for Siemens Interleaved Mode flag (ucMode: 0x1 = Ascending, 0x2 = Descending, 0x4 = Interleaved)
 mode = hdr_slice_series.get('ucMode', None)
 
-if mode == 4 or mode == '0x4' or (nslc > 1 and sort_idx[0] == 0): 
+if mode == 4 or mode == '0x4' or (nslc > 1 and slice_positions[0] < slice_positions[1]):
     # Interleaved slice ordering (0, 2, 4... 1, 3, 5...)
     # We construct the chronological-to-anatomical index map
     even_slices = list(range(0, nslc, 2))
@@ -260,9 +260,9 @@ for slc in slices_to_process:
 
     # randomly shuffle the cluster indices, so that the bin order is not correlated with the acquisition order
     print("shuffling k-means cluster indices")
-    idx_shuffled = np.random.permutation(idx_kmeans)
-
-    idx = idx_shuffled.reshape((nrep, -1))
+    idx_flat = idx_kmeans.ravel()
+    idx_shuffled = np.random.permutation(idx_flat).reshape(idx_kmeans.shape)
+    idx = idx_shuffled
     #Prep binned data and initialization
 
     # sort data into new bin dimension using k-means indices
@@ -350,8 +350,10 @@ for slc in slices_to_process:
     mag = ifftdim(out.reshape((nx_crop, ny, nbins, neco, nc)), dims=(0,1))
 
     for k in range(nbins):
-        bin_image = mag[:, :, k, :, :]
-        nib.save(nib.Nifti1Image(bin_image, np.eye(4)), f'{slc}_bin_{k}_result_{nbins}_{r}_{niters}.nii.gz')
+        bin_mag = sos(mag[:, :, k, :, :], axis=-1)
+        
+        # Save using proper orientation affine
+        nib.save(nib.Nifti1Image(bin_mag, affine), f'{slc}_bin_{k}_result_{nbins}_{r}_{niters}.nii.gz')
 
     # typically for magnitude images, we would sos-combine the bin and channel dimensions
     # this is not necessary, you can keep the bin-dimension uncombined and do something else if you like
