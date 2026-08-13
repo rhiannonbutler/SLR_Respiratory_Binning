@@ -259,10 +259,9 @@ for slc in slices_to_process:
     idx_kmeans = sklearn.cluster.KMeans(n_clusters=nbins, random_state=42).fit(tmp.reshape((-1,tmp.shape[-1]))).labels_.reshape((nrep,-1))
 
     # randomly shuffle the cluster indices, so that the bin order is not correlated with the acquisition order
-    print("shuffling k-means cluster indices")
-    idx_flat = idx_kmeans.ravel()
-    idx_shuffled = np.random.permutation(idx_flat).reshape(idx_kmeans.shape)
-    idx = idx_shuffled
+    print("getting random, uniformly distributed indices...")
+    n_lines_per_rep = (ny // R) + nref
+    idx = np.random.randint(0, nbins, size=(nrep, n_lines_per_rep))
     #Prep binned data and initialization
 
     # sort data into new bin dimension using k-means indices
@@ -370,7 +369,7 @@ for slc in slices_to_process:
 
     #TO DO: SAVE DICOMS INSTEAD
     # save results as nifti
-    final = nib.Nifti1Image(mag, np.eye(4))
+    final = nib.Nifti1Image(mag, affine)
     nib.save(final, f'{slc}_recon_result_{nbins}_{r}_{niters}.nii.gz')
 
 print("reconstruction finished!")
