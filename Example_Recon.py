@@ -318,7 +318,7 @@ for slc in slices_to_process:
     # set too low, signal loss in the output can results
     # set too high, nothing really happens
     # also, this number interacts with kernel size and type of SLR matrix. A larger kernel may require a larger r value to prevent over-regularization
-    r = args.r
+    r_single = args.r // neco
 
     # set number of iterations
     niters = args.iters
@@ -326,39 +326,57 @@ for slc in slices_to_process:
     # slr kernel size
     kernel = (5,5)
     # example gpu reconstruction using the c_matrix
-    if HAS_GPU:
-        out = gpuSLR.ADMM(dat,              # input data
-                        gpuSLR.c_matrix,    # type of structured low-rank matrix. options are `c_matrix`, `s_matrix` or `vcc_matrix`
-                        kernel,             # SLR kernel size
-                        r,                  # rank (d
-                        niters=niters,      # number of iterations (default 100)
-                        init=init)          # initialization (defaults to array of zeros)
-    else:
-        # similar reconstruction using cpu
-        out = SLR.ADMM(dat, SLR.c_matrix, kernel, r, niters=niters, init=init)
+    out_echoes = []
 
+    for e in range(neco):
+        print(f"  --> Reconstructing Echo {e+1}/{neco} (Rank r={r_single})...")
+        
+        # Extract 4D array for current echo: (nx_crop, ny, nbins, nc)
+        dat_e = dat[:, :, :, e, :]
+        init_e = init[:, :, :, e, :]
+        
+        # Reshape to combine bin and channel dimensions: (nx_crop, ny, nbins * nc)
+        dat_e = dat_e.reshape((nx_crop, ny, -1))
+        init_e = init_e.reshape((nx_crop, ny, -1))
+        
+        # Run ADMM SLR solver per echo
+        if HAS_GPU:
+            out_e = gpuSLR.ADMM(dat_e, gpuSLR.c_matrix, kernel, r_single, niters=niters, init=init_e)
+        else:
+            out_e = SLR.ADMM(dat_e, SLR.c_matrix, kernel, r_single, niters=niters, init=init_e)
+            
+        # Reshape back to 4D: (nx_crop, ny, nbins, nc)
+        out_e = out_e.reshape((nx_crop, ny, nbins, nc))
+        out_echoes.append(out_e)
 
-    # Plot results
-    # reshape and ifftdim output 
-    # use the reconstructed result, not the initialization, so nbins changes are visible
-    mag = ifftdim(out.reshape((nx_crop, ny, nbins, neco, nc)), dims=(0,1))
+    # Stack echoes along echo axis -> (nx_crop, ny, nbins, neco, nc)
+    out_all = np.stack(out_echoes, axis=3)
 
-    # typically for magnitude images, we would sos-combine the bin and channel dimensions
-    # this is not necessary, you can keep the bin-dimension uncombined and do something else if you like
-    # the bin dimension resolves the different navigator states
-    mag = sos(mag.transpose((0,1,3,2,4)).reshape((nx_crop, ny, neco, -1))) #maybe need to change this to neco
+    mag = ifftdim(out_all, dims=(0, 1))
 
-    y_vis = np.arange(96,224)
+    # Reorder to (nx_crop, ny, neco, nbins, nc) to isolate echoes
+    mag = mag.transpose((0, 1, 3, 2, 4))
+    
+    # Root-sum-of-squares combination across channels and dynamic bins
+    # Output shape: (nx_crop, ny, neco)
+    mag_echoes = sos(mag.reshape((nx_crop, ny, neco, -1)), axis=-1)
 
-    # plot all magnitude of all echoes
-    _, ax = plt.subplots(1, neco, figsize=(12,12*(2/neco))) 
-    for i in range(neco):
-        ax[i].imshow(np.rot90(mag[:,y_vis,i]), vmin=0, vmax=np.max(mag)*.8, cmap='gray')
-        ax[i].set_title(f'Recon Echo {i}')
+    for e in range(neco):
+        echo_slice = mag_echoes[:, :, e]
+        nifti_single_echo = nib.Nifti1Image(echo_slice, affine)
+        filename_single = f"slc_{slc}_echo_{e}_nbins_{nbins}_r_{r_single}_iters_{niters}.nii.gz"
+        nib.save(nifti_single_echo, filename_single)
+        print(f"  Saved individual echo: {filename_single}")
 
-    #TO DO: SAVE DICOMS INSTEAD
-    # save results as nifti
-    final = nib.Nifti1Image(mag, np.eye(4))
-    nib.save(final, f'{slc}_recon_result_{nbins}_{r}_{niters}.nii.gz')
+    nifti_3d_volume = nib.Nifti1Image(mag_echoes, affine)
+    filename_3d = f"slc_{slc}_all_echoes_nbins_{nbins}_r_{r_single}_iters_{niters}.nii.gz"
+    nib.save(nifti_3d_volume, filename_3d)
+    print(f"  Saved full multi-echo volume: {filename_3d}")
+
+    composite_4echo = sos(mag_echoes, axis=-1)  # shape: (nx_crop, ny)
+    nifti_composite = nib.Nifti1Image(composite_4echo, affine)
+    filename_composite = f"slc_{slc}_composite_SoS_nbins_{nbins}_r_{r_single}.nii.gz"
+    nib.save(nifti_composite, filename_composite)
+    print(f"  Saved composite 4-echo image: {filename_composite}")          
 
 print("reconstruction finished!")
