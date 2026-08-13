@@ -259,6 +259,7 @@ for slc in slices_to_process:
     idx_kmeans = sklearn.cluster.KMeans(n_clusters=nbins, random_state=42).fit(tmp.reshape((-1,tmp.shape[-1]))).labels_.reshape((nrep,-1))
 
     # randomly shuffle the cluster indices, so that the bin order is not correlated with the acquisition order
+    print("shuffling k-means cluster indices")
     idx_shuffled = np.random.permutation(idx_kmeans)
 
     idx = idx_shuffled.reshape((nrep, -1))
