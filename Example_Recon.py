@@ -35,6 +35,8 @@ import twixtools # for reading/loading raw twix data
 import sklearn   # used only for k-means 
 import grappa    # grappa for computing initialization
 import get_spinal_cord_crop_indices
+from sklearn.decomposition import PCA
+import matplotlib.pyplot as plt
 
 
 
@@ -257,6 +259,14 @@ for slc in slices_to_process:
     #tmp = np.angle(tmp)
     # get k-means cluster indices, with nbins clusters
     idx = sklearn.cluster.KMeans(n_clusters=nbins, random_state=42).fit(tmp.reshape((-1,tmp.shape[-1]))).labels_.reshape((nrep,-1))
+
+    tmp_flat = tmp.reshape((-1, tmp.shape[-1]))
+    pca = PCA(n_components=2).fit_transform(tmp_flat)
+
+    plt.scatter(pca[:,0], pca[:,1], c=idx.ravel(), cmap='tab10', s=5)
+    plt.title('Navigator features, colored by kmeans cluster')
+    
+
     #Prep binned data and initialization
 
     # sort data into new bin dimension using k-means indices
@@ -325,23 +335,31 @@ for slc in slices_to_process:
 
     # slr kernel size
     kernel = (5,5)
-    # example gpu reconstruction using the c_matrix
-    if HAS_GPU:
-        out = gpuSLR.ADMM(dat,              # input data
-                        gpuSLR.c_matrix,    # type of structured low-rank matrix. options are `c_matrix`, `s_matrix` or `vcc_matrix`
+    bin_results = np.zeros((nx_crop, ny, nbins, neco, nc), dtype='complex64')
+
+    for b in range(nbins):
+        dat_bin = dat[:,:,b,:,:].reshape((nx_crop, ny, -1))
+        init_bin = init[:,:,b*neco*nc:(b+1)*neco*nc].reshape((nx_crop, ny, -1))
+        # example gpu reconstruction using the c_matrix
+        if HAS_GPU:
+            out = gpuSLR.ADMM(dat_bin,              # input data
+                            gpuSLR.c_matrix,    # type of structured low-rank matrix. options are `c_matrix`, `s_matrix` or `vcc_matrix`
                         kernel,             # SLR kernel size
                         r,                  # rank (d
                         niters=niters,      # number of iterations (default 100)
                         init=init)          # initialization (defaults to array of zeros)
-    else:
+        else:
         # similar reconstruction using cpu
-        out = SLR.ADMM(dat, SLR.c_matrix, kernel, r, niters=niters, init=init)
-
+            out = SLR.ADMM(dat_bin, SLR.c_matrix, kernel, r, niters=niters, init=init)
+        out_b = out.reshape((nx_crop, ny, neco, nc))
+        mag_b = ifftdim(out_b, dims=(0,1))
+        bin_results[:,:,b,:,:] = sos(mag_b, axis=-1)
+        nib.save(nib.Nifti1Image(bin_results[:,:,b,:,:], affine), f'{slc}_bin_{b}_result_{nbins}_{r}_{niters}.nii.gz')
 
     # Plot results
     # reshape and ifftdim output 
     # use the reconstructed result, not the initialization, so nbins changes are visible
-    mag = ifftdim(out.reshape((nx_crop, ny, nbins, neco, nc)), dims=(0,1))
+    mag = ifftdim(bin_results, dims=(0,1))
 
     for k in range(nbins):
         bin_mag = sos(mag[:, :, k, :, :], axis=-1)
@@ -362,7 +380,6 @@ for slc in slices_to_process:
         ax[i].imshow(np.rot90(mag[:,y_vis,i]), vmin=0, vmax=np.max(mag)*.8, cmap='gray')
         ax[i].set_title(f'Recon Echo {i}')
 
-    #TO DO: SAVE DICOMS INSTEAD
     # save results as nifti
     final = nib.Nifti1Image(mag, np.eye(4))
     nib.save(final, f'{slc}_recon_result_{nbins}_{r}_{niters}.nii.gz')
