@@ -5,6 +5,8 @@
 #
 # Mark Chiew (mark.chiew@utoronto.ca)
 
+
+
 # Imports
 import numpy as np
 
@@ -32,9 +34,10 @@ import nibabel as nib
 import twixtools # for reading/loading raw twix data
 import sklearn   # used only for k-means 
 import grappa    # grappa for computing initialization
-import subprocess
-import os
 import get_spinal_cord_crop_indices
+
+
+
 # Define some helper functions
 
 # handles centric k-space with shifting, along arbitrary dimensions
@@ -47,6 +50,7 @@ def ifftdim(x, dims=None):
 # root-sum-of-squares combination
 def sos(x, axis=-1):
     return np.sqrt(np.sum(np.abs(x)**2, axis=axis))
+
 
 # define arguments 
 parser = argparse.ArgumentParser(description='Reconstruct a selected slice from the GRE data.')
@@ -65,9 +69,13 @@ parser.add_argument('--r', type=int, default=150, help='rank parameter for the S
 parser.add_argument('--nbins', type=int, default=4, help='number of navigator bins for the reconstruction')
 parser.add_argument('--sct_crop', action="store_false", help='use sct segmentation cropping instead of hardcoded indices')
 parser.add_argument('--i', type=str, required=True, help='.dat file containing the raw kspace data to be reconstructed')
+parser.add_argument('--iters', type=int, default=100, help='number of iterations for the reconstruction')
 args = parser.parse_args()
 
-# Load and Whiten Data
+
+
+# Load data
+
 # Map twix file
 print("loading in and whitening data")
 map = twixtools.map_twix(args.i)
@@ -79,6 +87,25 @@ img = map[-1]['image'][:].squeeze()
 
 # Get image dimensions
 nrep, neco, nslc, ny, nc, nx = img.shape
+
+hdr = map[-1]['hdr']
+
+slice0 = hdr['MeasYaps']['sSliceArray']['asSlice'][0]
+fov_read = float(slice0.get('dReadoutFOV', 192.0))
+fov_phase = float(slice0.get('dPhaseFOV', 192.0))
+thickness = float(slice0.get('dThickness', 3.0))
+gap = float(slice0.get('dGap', 0.0))
+
+dx = fov_read / nx
+dy = fov_phase / ny
+dz = thickness + gap
+
+affine = np.array([
+    [dx, 0, 0, -(nx * dx) / 2],
+    [0, dy, 0, -(ny * dy) / 2],
+    [0, 0, dz, -(nslc * dz) / 2],
+    [0, 0, 0, 1.0]
+], dtype=np.float32)
 
 # Get acceleration factor (assume integer)
 R = int(map[-1]['hdr']['Config']['AFLin'])
@@ -99,6 +126,39 @@ map[-1]['ref_ps'].flags['skip_empty_lead'] = True
 map[-1]['ref_ps'].flags['remove_os'] = True
 ref_nav = map[-1]['ref_ps'][:].squeeze()
 
+# place slices in anatomical order instead of order in which they were acquired
+hdr_slice_series = map[-1]['hdr']['MeasYaps']['sSliceArray']
+slc_arr = map[-1]['hdr']['MeasYaps']['sSliceArray']['asSlice']
+
+if 'ucMode' in hdr_slice_series or 'aInSlice' in hdr_slice_series:
+    pass
+
+meas = map[-1]
+
+slice_positions = []
+for i in range(nslc):
+    tra = slc_arr[i].get('sPosition', {}).get('dTra', 0.0)
+    slice_positions.append(tra)
+
+# Look for Siemens Interleaved Mode flag (ucMode: 0x1 = Ascending, 0x2 = Descending, 0x4 = Interleaved)
+mode = hdr_slice_series.get('ucMode', None)
+
+if mode == 4 or mode == '0x4' or (nslc > 1 and sort_idx[0] == 0): 
+    # Interleaved slice ordering (0, 2, 4... 1, 3, 5...)
+    # We construct the chronological-to-anatomical index map
+    even_slices = list(range(0, nslc, 2))
+    odd_slices = list(range(1, nslc, 2))
+    acq_to_anat_map = np.array(even_slices + odd_slices)
+    
+    sort_idx = np.argsort(acq_to_anat_map)
+else:
+    sort_idx = np.array(range(nslc))
+
+print("Corrected anatomical sort indices:", sort_idx)
+img = img[:, :, sort_idx, ...]
+img_nav = img_nav[:, sort_idx, ...]
+ref = ref[:, :, sort_idx, ...]
+ref_nav = ref_nav
 
 # Compute and apply noise pre-whitening transform
 # This is optional - but if you don't apply the tensordot transformation, you need to manually move the channel dimension to the end
@@ -108,6 +168,7 @@ img = np.tensordot(img, W, axes=((-2,),(0)))
 ref = np.tensordot(ref, W, axes=((-2,),(0)))
 img_nav = np.tensordot(img_nav, W, axes=((-2,),(0)))
 ref_nav = np.tensordot(ref_nav, W, axes=((-2,),(0)))
+
 
 
 # Slice-specific prep 
@@ -136,7 +197,6 @@ for s in range(nslc):
     for i in range(neco):
         init_all[s,:,:,:,i] = grappa.grappa(np.mean(img[:,i,s,:,:,:], axis=0).transpose((2,1,0)), np.mean(ref[:,i,s,:,:,:], axis=0).transpose((2,1,0)), (1,2), (3,2))
 
-print(init_all.shape)
 
 img_space = np.fft.fftshift(
     np.fft.ifft2(
@@ -146,32 +206,31 @@ img_space = np.fft.fftshift(
     axes=(2, 3)
 )
 img_3d_full = sos(img_space, axis=1) # sos combine the channel dimension
-img_3d_full = np.abs(img_3d_full[:,:,:,1]).transpose((2,1,0))  # just use first echo for segmentation
-print(img_3d_full.shape)
+img_3d_full = np.abs(img_3d_full[:,:,:,1]).transpose((1,2,0))  # just use first echo for segmentation
+img_3d_full = (img_3d_full / np.percentile(img_3d_full, 99.9)) * 1000.0 # normalize for sct
+
+# 3. Clip negative or extreme out-of-range values
+img_3d_full = np.clip(img_3d_full, 0, None)
 
 
 # select RO indices near the spinal cord, as we only care about that region
 sct_crop = args.sct_crop
 print("cropping around spinal cord")
 if sct_crop:
-    affine = np.eye(4)
     x_idx, y_idx = get_spinal_cord_crop_indices.get_indices(
-        img_3d_full, 
-        affine, 
-        contrast="t2", 
-        margin_x=30,  
-        margin_y=5,   
-        x_axis=0, 
-        y_axis=1
-    )
+    img_3d_full,
+    affine,
+    "test",
+    args.r,
+)
 
     # Use x_idx for navigator selection
     sc_idx = x_idx
+    print("cropping indices:", sc_idx)
 # maybe should just get rid of this option?
 else:
     sc_idx = (164, 220) # these indices were used for the original Zurich data that we sent mark
 
-print(sc_idx)
 
 # slice to reconstruct
 if args.all_slices:
@@ -180,12 +239,13 @@ else:
     slices_to_process = [args.slc]
 
 for slc in slices_to_process:
-    init = init_all[:, :, :, slc, :]
-    print("binning kspace lines")
+    init = init_all[slc, :, :, :, :]
+    print("processing slice:", slc)
     # reference everything relative to the first line, and average the relative signals across coil channels
     # concatenate navigators, and inverse FFT navigators along RO dimension
     # use only sampled lines, to avoid an extra trivial cluster from the empty lines
     nav = ifftdim(np.concatenate((img_nav[:,slc,::R,:,:], ref_nav[:,slc,:,:,:]), axis=1), dims=(-2,))
+
 
     tmp = nav[:, :, sc_idx, :]
     tmp = np.squeeze(np.mean(tmp*np.conj(tmp[:,[0],:,:]), axis=-1))
@@ -196,8 +256,7 @@ for slc in slices_to_process:
     # alternatively, you could try extracting just the phase of the navigator
     #tmp = np.angle(tmp)
     # get k-means cluster indices, with nbins clusters
-    idx = sklearn.cluster.KMeans(n_clusters=nbins).fit(tmp.reshape((-1,tmp.shape[-1]))).labels_.reshape((nrep,-1))
-
+    idx = sklearn.cluster.KMeans(n_clusters=nbins, random_state=42).fit(tmp.reshape((-1,tmp.shape[-1]))).labels_.reshape((nrep,-1))
     #Prep binned data and initialization
 
     # sort data into new bin dimension using k-means indices
@@ -205,6 +264,7 @@ for slc in slices_to_process:
     # the cnt array just keeps track in case the same line appears in the same bin across repetitions
     # if this happens, we simply average the lines
     dat = np.zeros((nx, ny, nbins, neco, nc), dtype='complex64')
+
     cnt = np.zeros((nx, ny, nbins, neco, nc))
     ref_offset = ny//2 - nref//2
     for i in range(nrep): 
@@ -261,11 +321,10 @@ for slc in slices_to_process:
     r = args.r
 
     # set number of iterations
-    niters = 1000
+    niters = args.iters
 
     # slr kernel size
     kernel = (5,5)
-    print("running SLR recon")
     # example gpu reconstruction using the c_matrix
     if HAS_GPU:
         out = gpuSLR.ADMM(dat,              # input data
@@ -300,6 +359,6 @@ for slc in slices_to_process:
     #TO DO: SAVE DICOMS INSTEAD
     # save results as nifti
     final = nib.Nifti1Image(mag, np.eye(4))
-    nib.save(final, f'{slc}_recon_result_{nbins}_{r}.nii.gz')
+    nib.save(final, f'{slc}_recon_result_{nbins}_{r}_{niters}.nii.gz')
 
 print("reconstruction finished!")
