@@ -349,6 +349,10 @@ for slc in slices_to_process:
     # use the reconstructed result, not the initialization, so nbins changes are visible
     mag = ifftdim(out.reshape((nx_crop, ny, nbins, neco, nc)), dims=(0,1))
 
+    for k in range(nbins):
+        bin_image = mag[:, :, k, :, :]
+        nib.save(nib.Nifti1Image(bin_image, np.eye(4)), f'{slc}_bin_{k}_result_{nbins}_{r}_{niters}.nii.gz')
+
     # typically for magnitude images, we would sos-combine the bin and channel dimensions
     # this is not necessary, you can keep the bin-dimension uncombined and do something else if you like
     # the bin dimension resolves the different navigator states
