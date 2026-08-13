@@ -196,7 +196,14 @@ for slc in slices_to_process:
     # alternatively, you could try extracting just the phase of the navigator
     #tmp = np.angle(tmp)
     # get k-means cluster indices, with nbins clusters
-    idx = sklearn.cluster.KMeans(n_clusters=nbins).fit(tmp.reshape((-1,tmp.shape[-1]))).labels_.reshape((nrep,-1))
+    idx_kmeans = sklearn.cluster.KMeans(n_clusters=nbins, random_state=42).fit(tmp.reshape((-1,tmp.shape[-1]))).labels_.reshape((nrep,-1))
+
+    # as an experiment, we can try to shuffle the labels to see what happens when the bins are random
+    print("shuffling k-means labels")
+    idx_shuffled = np.random.permutation(idx_kmeans)
+
+    # 3. Reshape back to (nrep, lines_per_rep)
+    idx = idx_shuffled.reshape((nrep, -1))
 
     #Prep binned data and initialization
 
