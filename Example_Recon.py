@@ -336,11 +336,11 @@ for slc in slices_to_process:
                         gpuSLR.c_matrix,    # type of structured low-rank matrix. options are `c_matrix`, `s_matrix` or `vcc_matrix`
                         kernel,             # SLR kernel size
                         r,                  # rank (d
-                        niters=niters,      # number of iterations (default 100)
-                        init=init)          # initialization (defaults to array of zeros)
+                        niters=niters,
+              )      # number of iterations (default 100)
     else:
         # similar reconstruction using cpu
-        out = SLR.ADMM(dat, SLR.c_matrix, kernel, r, niters=niters, init=init)
+        out = SLR.ADMM(dat, SLR.c_matrix, kernel, r, niters=niters)
 
 
     # Plot results
