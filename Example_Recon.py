@@ -60,16 +60,16 @@ def plot_navigator_clusters(navigator_data, cluster_indices, slice_idx, nbins):
     mean_unit_vectors = np.mean(unit_vectors, axis=-1)
     circ_mean_phases = np.angle(mean_unit_vectors)
 
-    fig, (ax1, ax2) = plt.subplot(2, 1, figsize=(10, 8), gridspec_kw = {'height_ratios': [2, 1]})
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 8), gridspec_kw = {'height_ratios': [2, 1]})
     cmap = plt.get_cmap('tab10', nbins)
-    line_indices = np.arrange(len(flat_labels))
+    line_indices = np.arange(len(flat_labels))
 
     scatter = ax1.scatter(line_indices, circ_mean_phases, c=flat_labels, cmap=cmap, s=15, alpha=0.8, edgecolors='none')
     ax1.set_title(f"Navigator Phase Clustering (Slice {slice_idx})")
     ax1.set_xlabel("Line Index")
     ax1.set_ylabel("Circular Mean Phase (radians)")
-    ax1.set_ylim(-np.pi - 0.2, np.pi + 0.2)
-    ax1.set_yticklabels(['-π', '-π/2', '0', 'π/2', 'π'])
+    ax1.set_yticks([-np.pi, -np.pi / 2, 0, np.pi / 2, np.pi])
+    ax1.set_yticklabels([r'$-\pi$', r'$-\pi/2$', r'$0$', r'$\pi/2$', r'$\pi$'])
     ax1.grid(True, alpha=0.3)
     cbar = plt.colorbar(scatter, ax=ax1, ticks=np.arange(nbins))
     cbar.set_label("Cluster Index", rotation=270, labelpad=15)
@@ -96,7 +96,7 @@ def plot_navigator_clusters(navigator_data, cluster_indices, slice_idx, nbins):
     plt.tight_layout()
 
     # Save image and close figure to free memory
-    filename = f'slice_{slc}_kmeans_navigator_phase.png'
+    filename = f'slice_{slice_idx}_kmeans_navigator_phase_angle.png'
     plt.savefig(filename, dpi=150, bbox_inches='tight')
     plt.close(fig)
     print(f'Saved navigator plot to {filename}')
@@ -305,7 +305,7 @@ for slc in slices_to_process:
     tmp = np.concatenate((np.real(tmp_complex), np.imag(tmp_complex)), axis=-1)
 
     # alternatively, you could try extracting just the phase of the navigator
-    #tmp = np.angle(tmp)
+    tmp = np.angle(tmp_complex)
     # get k-means cluster indices, with nbins clusters
     idx = sklearn.cluster.KMeans(n_clusters=nbins, random_state=42).fit(tmp.reshape((-1,tmp.shape[-1]))).labels_.reshape((nrep,-1))
     plot_navigator_clusters(tmp_complex, idx, slc, nbins)
