@@ -52,6 +52,56 @@ def ifftdim(x, dims=None):
 def sos(x, axis=-1):
     return np.sqrt(np.sum(np.abs(x)**2, axis=axis))
 
+def plot_navigator_clusters(navigator_data, cluster_indices, slice_idx, nbins):
+    flat_com = navigator_data.reshape(-1, navigator_data.shape[-1])
+    flat_labels = cluster_indices.flatten()
+
+    phases = np.angle(flat_com)
+    unit_vectors = np.exp(1j * phases)
+    mean_unit_vectors = np.mean(unit_vectors, axis=-1)
+    circ_mean_phases = np.angle(mean_unit_vectors)
+
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 8), gridspec_kw = {'height_ratios': [2, 1]})
+    cmap = plt.get_cmap('tab10', nbins)
+    line_indices = np.arange(len(flat_labels))
+
+    scatter = ax1.scatter(line_indices, circ_mean_phases, c=flat_labels, cmap=cmap, s=15, alpha=0.8, edgecolors='none')
+    ax1.set_title(f"Navigator Phase Clustering (Slice {slice_idx})")
+    ax1.set_xlabel("Line Index")
+    ax1.set_ylabel("Circular Mean Phase (radians)")
+    ax1.set_yticks([-np.pi, -np.pi / 2, 0, np.pi / 2, np.pi])
+    ax1.set_yticklabels([r'$-\pi$', r'$-\pi/2$', r'$0$', r'$\pi/2$', r'$\pi$'])
+    ax1.grid(True, alpha=0.3)
+    cbar = plt.colorbar(scatter, ax=ax1, ticks=np.arange(nbins))
+    cbar.set_label("Cluster Index", rotation=270, labelpad=15)
+
+    for b in range(nbins):
+        mask = flat_labels == b
+        if np.any(mask):
+            ax2.hist(
+                circ_mean_phases[mask],
+                bins=25,
+                range=(-np.pi, np.pi),
+                alpha=0.5,
+                label=f'Bin {b}',
+                color=cmap(b / max(1, nbins - 1)),
+            )
+
+    ax2.set_xlabel('Circular Mean Phase (rad)')
+    ax2.set_ylabel('Line Count')
+    ax2.set_xticks([-np.pi, -np.pi / 2, 0, np.pi / 2, np.pi])
+    ax2.set_xticklabels([r'$-\pi$', r'$-\pi/2$', r'$0$', r'$\pi/2$', r'$\pi$'])
+    ax2.grid(True, linestyle='--', alpha=0.5)
+    ax2.legend(loc='upper right', fontsize=8)
+
+    plt.tight_layout()
+
+    # Save image and close figure to free memory
+    filename = f'slice_{slice_idx}_kmeans_navigator_phase_angle_random.png'
+    plt.savefig(filename, dpi=150, bbox_inches='tight')
+    plt.close(fig)
+    print(f'Saved navigator plot to {filename}')
+
 
 # define arguments 
 parser = argparse.ArgumentParser(description='Reconstruct a selected slice from the GRE data.')
@@ -248,11 +298,11 @@ for slc in slices_to_process:
     # use only sampled lines, to avoid an extra trivial cluster from the empty lines
     nav = ifftdim(np.concatenate((img_nav[:, slc, ::R, :, :], ref_nav[:, slc, :, :, :]), axis=1), dims=(-2,))
     tmp = nav[:, :, sc_idx, :]
-    tmp = np.squeeze(np.mean(tmp * np.conj(tmp[:, [0], :, :]), axis=-1))
+    tmp_complex = np.squeeze(np.mean(tmp * np.conj(tmp[:, [0], :, :]), axis=-1))
     # because sk-learn k-means requires real-valued input, I've concatenated the real and imaginary parts of the navigator
-    tmp = np.concatenate((np.real(tmp), np.imag(tmp)), axis=-1)
+    tmp = np.concatenate((np.real(tmp_complex), np.imag(tmp_complex)), axis=-1)
     # alternatively, you could try extracting just the phase of the navigator
-    # tmp = np.angle(tmp)
+    #tmp = np.angle(tmp_complex)
 
     # get k-means cluster indices, with nbins clusters
     idx_kmeans = sklearn.cluster.KMeans(n_clusters=nbins, random_state=42).fit(
@@ -261,14 +311,6 @@ for slc in slices_to_process:
     idx_flat = idx_kmeans.ravel()
     idx_shuffled = np.random.permutation(idx_flat).reshape(idx_kmeans.shape)
     idx = idx_shuffled
-
-    tmp_flat = tmp.reshape((-1, tmp.shape[-1]))
-    pca = PCA(n_components=2).fit_transform(tmp_flat)
-    fig_pca, ax_pca = plt.subplots()
-    ax_pca.scatter(pca[:, 0], pca[:, 1], c=idx.ravel(), cmap='tab10', s=5)
-    ax_pca.set_title('Navigator features, colored by kmeans cluster')
-    fig_pca.savefig(f'{slc}_navigator_pca_random.png', dpi=150)
-    plt.close(fig_pca)
 
     # Prep binned data and initialization
     # sort data into new bin dimension using k-means indices
@@ -300,56 +342,68 @@ for slc in slices_to_process:
     nx_crop = len(xidx)
     # ifft to x-dimension, crop, then fft back to kx -- dims=(0,) only touches the x axis,
     # so this works fine directly on the full 5D arrays, no flattening needed first
-    dat = fftdim(ifftdim(dat, dims=(0,))[xidx, :, :, :, :], dims=(0,))
-    init = fftdim(ifftdim(init, dims=(0,))[xidx, :, :, :, :], dims=(0,))
+    dat = fftdim(ifftdim(dat, dims=(0,))[nx_crop, :, :], dims=(0,))
+    init = fftdim(ifftdim(init, dims=(0,))[nx_crop, :, :], dims=(0,))
 
-    # ## Reconstruction (independent per-bin, to isolate cross-bin sharing)
+
+    # ## Reconstruction
+    # There is a CPU version (SLR) and a GPU version (gpuSLR). Otherwise reconstruction function calls are very similar
+    
+    # The reconstruction uses an alternating direction method of multipliers (ADMM) optimization to solve the structured low-rank constrained reconstruction.
+    
+    # The third input parameter is the type of structured low-rank matrix formulation to use. There are several options:\
+    # `c_matrix`: the most basic, straightforward phase smoothness and limited image support constraint\
+    # `s_matrix`: everything c_matrix does, but additionally exploits some conjugate symmetry properties\
+    # `vcc_matrix`: similar to s_matrix, but formulated differently, using the virtual conjugate coil framework
+
+    # SLR reconstruction
+
+    # set rank parameter
+    # this is a bit tricky to tune - lower numbers will result in greater regularization
+    # set too low, signal loss in the output can results
+    # set too high, nothing really happens
+    # also, this number interacts with kernel size and type of SLR matrix. A larger kernel may require a larger r value to prevent over-regularization
     r = args.r
+
+    # set number of iterations
     niters = args.iters
-    kernel = (5, 5)
 
-    # real magnitude, channel-combined -- no nc axis, since sos collapses it per bin below
-    bin_results = np.zeros((nx_crop, ny, nbins, neco), dtype='float32')
+    # slr kernel size
+    kernel = (5,5)
+    # example gpu reconstruction using the c_matrix
+    if HAS_GPU:
+        out = gpuSLR.ADMM(dat,              # input data
+                        gpuSLR.c_matrix,    # type of structured low-rank matrix. options are `c_matrix`, `s_matrix` or `vcc_matrix`
+                        kernel,             # SLR kernel size
+                        r,                  # rank (d
+                        niters=niters,      # number of iterations (default 100)
+                        init=init)          # initialization (defaults to array of zeros)
+    else:
+        # similar reconstruction using cpu
+        out = SLR.ADMM(dat, SLR.c_matrix, kernel, r, niters=niters, init=init)
 
-    for b in range(nbins):
-        dat_bin = dat[:, :, b, :, :].reshape((nx_crop, ny, -1))
-        init_bin = init[:, :, b, :, :].reshape((nx_crop, ny, -1))
-        print("no GRAPPA initialization")
 
-        if HAS_GPU:
-            out = gpuSLR.ADMM(dat_bin,
-                               gpuSLR.c_matrix,
-                               kernel,
-                               r,
-                               niters=niters)          # was `init` (full array) -- bug, now fixed
-        else:
-            out = SLR.ADMM(dat_bin, SLR.c_matrix, kernel, r, niters=niters)
-
-        out_b = out.reshape((nx_crop, ny, neco, nc))
-        mag_b = ifftdim(out_b, dims=(0, 1))
-        bin_results[:, :, b, :] = sos(mag_b, axis=-1)   # collapses nc -> (nx_crop, ny, neco)
-
-        nib.save(nib.Nifti1Image(bin_results[:, :, b, :], affine),
-                 f'{slc}_bin_{b}_result_{nbins}_{r}_{niters}_random.nii.gz')
-
-    # bin_results is already real, image-domain, channel-combined: (nx_crop, ny, nbins, neco)
-    # no further ifftdim needed here -- that was a leftover from the old single-call version
-    mag = bin_results
+    # Plot results
+    # reshape and ifftdim output 
+    # use the reconstructed result, not the initialization, so nbins changes are visible
+    mag = ifftdim(out.reshape((nx_crop, ny, nbins, neco, nc)), dims=(0,1))
 
     # typically for magnitude images, we would sos-combine the bin and channel dimensions
-    # channels are already combined per-bin above; this step sos-combines just the bin dimension,
-    # keeping echoes separate so contrast differences across echoes remain visible
-    mag_combined = sos(mag.transpose((0, 1, 3, 2)), axis=-1)  # (nx_crop, ny, nbins, neco) -> (nx_crop, ny, neco)
+    # this is not necessary, you can keep the bin-dimension uncombined and do something else if you like
+    # the bin dimension resolves the different navigator states
+    mag = sos(mag.transpose((0,1,3,2,4)).reshape((nx_crop, ny, neco, -1))) #maybe need to change this to neco
 
-    y_vis = np.arange(96, 224)
-    # plot magnitude of all echoes
-    _, ax = plt.subplots(1, neco, figsize=(12, 12 * (2 / neco)))
+    y_vis = np.arange(96,224)
+
+    # plot all magnitude of all echoes
+    _, ax = plt.subplots(1, neco, figsize=(12,12*(2/neco))) 
     for i in range(neco):
-        ax[i].imshow(np.rot90(mag_combined[:, y_vis, i]), vmin=0, vmax=np.max(mag_combined) * .8, cmap='gray')
+        ax[i].imshow(np.rot90(mag[:,y_vis,i]), vmin=0, vmax=np.max(mag)*.8, cmap='gray')
         ax[i].set_title(f'Recon Echo {i}')
 
+    #TO DO: SAVE DICOMS INSTEAD
     # save results as nifti
-    final = nib.Nifti1Image(mag_combined, np.eye(4))
-    nib.save(final, f'{slc}_recon_result_{nbins}_{r}_{niters}_random.nii.gz')
+    final = nib.Nifti1Image(mag, np.eye(4))
+    nib.save(final, f'{slc}_recon_result_{nbins}_{r}_{niters}.nii.gz')
 
 print("reconstruction finished!")
