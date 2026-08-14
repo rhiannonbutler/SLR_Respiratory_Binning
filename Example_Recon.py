@@ -35,7 +35,8 @@ import twixtools # for reading/loading raw twix data
 import sklearn   # used only for k-means 
 import grappa    # grappa for computing initialization
 import get_spinal_cord_crop_indices
-
+from sklearn.decomposition import PCA
+import matplotlib.pyplot as plt
 
 
 # Define some helper functions
