@@ -51,6 +51,57 @@ def ifftdim(x, dims=None):
 def sos(x, axis=-1):
     return np.sqrt(np.sum(np.abs(x)**2, axis=axis))
 
+def plot_navigator_clusters(navigator_data, cluster_indices, slice_idx, nbins):
+    flat_com = navigator_data.reshape(-1, navigator_data.shape[-1])
+    flat_labels = cluster_indices.flatten()
+
+    phases = np.angle(flat_com)
+    unit_vectors = np.exp(1j * phases)
+    mean_unit_vectors = np.mean(unit_vectors, axis=-1)
+    circ_mean_phases = np.angle(mean_unit_vectors)
+
+    fig, (ax1, ax2) = plt.subplot(2, 1, figsize=(10, 8), gridspec_kw = {'height_ratios': [2, 1]})
+    cmap = plt.get_cmap('tab10', nbins)
+    line_indices = np.arrange(len(flat_labels))
+
+    scatter = ax1.scatter(line_indices, circ_mean_phases, c=flat_labels, cmap=cmap, s=15, alpha=0.8, edgecolors='none')
+    ax1.set_title(f"Navigator Phase Clustering (Slice {slice_idx})")
+    ax1.set_xlabel("Line Index")
+    ax1.set_ylabel("Circular Mean Phase (radians)")
+    ax1.set_ylim(-np.pi - 0.2, np.pi + 0.2)
+    ax1.set_yticklabels(['-π', '-π/2', '0', 'π/2', 'π'])
+    ax1.grid(True, alpha=0.3)
+    cbar = plt.colorbar(scatter, ax=ax1, ticks=np.arange(nbins))
+    cbar.set_label("Cluster Index", rotation=270, labelpad=15)
+
+    for b in range(nbins):
+        mask = flat_labels == b
+        if np.any(mask):
+            ax2.hist(
+                circ_mean_phases[mask],
+                bins=25,
+                range=(-np.pi, np.pi),
+                alpha=0.5,
+                label=f'Bin {b}',
+                color=cmap(b / max(1, nbins - 1)),
+            )
+
+    ax2.set_xlabel('Circular Mean Phase (rad)')
+    ax2.set_ylabel('Line Count')
+    ax2.set_xticks([-np.pi, -np.pi / 2, 0, np.pi / 2, np.pi])
+    ax2.set_xticklabels([r'$-\pi$', r'$-\pi/2$', r'$0$', r'$\pi/2$', r'$\pi$'])
+    ax2.grid(True, linestyle='--', alpha=0.5)
+    ax2.legend(loc='upper right', fontsize=8)
+
+    plt.tight_layout()
+
+    # Save image and close figure to free memory
+    filename = f'slice_{slc}_kmeans_navigator_phase.png'
+    plt.savefig(filename, dpi=150, bbox_inches='tight')
+    plt.close(fig)
+    print(f'Saved navigator plot to {filename}')
+
+
 
 # define arguments 
 parser = argparse.ArgumentParser(description='Reconstruct a selected slice from the GRE data.')
@@ -248,15 +299,16 @@ for slc in slices_to_process:
 
 
     tmp = nav[:, :, sc_idx, :]
-    tmp = np.squeeze(np.mean(tmp*np.conj(tmp[:,[0],:,:]), axis=-1))
+    tmp_complex = np.squeeze(np.mean(tmp*np.conj(tmp[:,[0],:,:]), axis=-1))
 
     # because sk-learn k-means requires real-valued input, I've concatenated the real and imaginary parts of the navigator
-    tmp = np.concatenate((np.real(tmp), np.imag(tmp)), axis=-1)
+    tmp = np.concatenate((np.real(tmp_complex), np.imag(tmp_complex)), axis=-1)
 
     # alternatively, you could try extracting just the phase of the navigator
     #tmp = np.angle(tmp)
     # get k-means cluster indices, with nbins clusters
     idx = sklearn.cluster.KMeans(n_clusters=nbins, random_state=42).fit(tmp.reshape((-1,tmp.shape[-1]))).labels_.reshape((nrep,-1))
+    plot_navigator_clusters(tmp_complex, idx, slc, nbins)
     #Prep binned data and initialization
 
     # sort data into new bin dimension using k-means indices
