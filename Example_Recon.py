@@ -324,10 +324,10 @@ for slc in slices_to_process:
 
         out_b = out.reshape((nx_crop, ny, neco, nc))
         mag_b = ifftdim(out_b, dims=(0, 1))
-        bin_results[:, :, b, :] = sos(mag_b, axis=-1)   # collapses nc -> (nx_crop, ny, neco)
+        bin_results[:, :, b, :] = sos(mag_b, axis=-1)  
 
         nib.save(nib.Nifti1Image(bin_results[:, :, b, :], affine),
-                 f'{slc}_bin_{b}_result_{nbins}_{r}_{niters}.nii.gz')
+                 f'{slc}_bin_{b}_result_{nbins}_{r}_{niters}_resp.nii.gz')
 
     # bin_results is already real, image-domain, channel-combined: (nx_crop, ny, nbins, neco)
     # no further ifftdim needed here -- that was a leftover from the old single-call version
@@ -347,6 +347,6 @@ for slc in slices_to_process:
 
     # save results as nifti
     final = nib.Nifti1Image(mag_combined, np.eye(4))
-    nib.save(final, f'{slc}_recon_result_{nbins}_{r}_{niters}.nii.gz')
+    nib.save(final, f'{slc}_recon_result_{nbins}_{r}_{niters}_resp.nii.gz')
 
 print("reconstruction finished!")
