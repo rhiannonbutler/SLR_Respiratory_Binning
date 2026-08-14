@@ -318,7 +318,7 @@ for slc in slices_to_process:
                                kernel,
                                r,
                                niters=niters,
-                               init=init_bin)          # was `init` (full array) -- bug, now fixed
+                               init=init_bin)          
         else:
             out = SLR.ADMM(dat_bin, SLR.c_matrix, kernel, r, niters=niters, init=init_bin)
 
