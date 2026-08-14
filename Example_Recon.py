@@ -314,16 +314,16 @@ for slc in slices_to_process:
     for b in range(nbins):
         dat_bin = dat[:, :, b, :, :].reshape((nx_crop, ny, -1))
         init_bin = init[:, :, b, :, :].reshape((nx_crop, ny, -1))
+        print("no GRAPPA initialization")
 
         if HAS_GPU:
             out = gpuSLR.ADMM(dat_bin,
                                gpuSLR.c_matrix,
                                kernel,
                                r,
-                               niters=niters,
-                               init=init_bin)          # was `init` (full array) -- bug, now fixed
+                               niters=niters)          # was `init` (full array) -- bug, now fixed
         else:
-            out = SLR.ADMM(dat_bin, SLR.c_matrix, kernel, r, niters=niters, init=init_bin)
+            out = SLR.ADMM(dat_bin, SLR.c_matrix, kernel, r, niters=niters)
 
         out_b = out.reshape((nx_crop, ny, neco, nc))
         mag_b = ifftdim(out_b, dims=(0, 1))
