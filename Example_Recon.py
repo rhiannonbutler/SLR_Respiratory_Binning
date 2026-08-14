@@ -266,7 +266,7 @@ for slc in slices_to_process:
     fig_pca, ax_pca = plt.subplots()
     ax_pca.scatter(pca[:, 0], pca[:, 1], c=idx.ravel(), cmap='tab10', s=5)
     ax_pca.set_title('Navigator features, colored by kmeans cluster')
-    fig_pca.savefig(f'{slc}_navigator_pca.png', dpi=150)
+    fig_pca.savefig(f'{slc}_navigator_pca_random.png', dpi=150)
     plt.close(fig_pca)
 
     # Prep binned data and initialization
@@ -329,7 +329,7 @@ for slc in slices_to_process:
         bin_results[:, :, b, :] = sos(mag_b, axis=-1)   # collapses nc -> (nx_crop, ny, neco)
 
         nib.save(nib.Nifti1Image(bin_results[:, :, b, :], affine),
-                 f'{slc}_bin_{b}_result_{nbins}_{r}_{niters}.nii.gz')
+                 f'{slc}_bin_{b}_result_{nbins}_{r}_{niters}_random.nii.gz')
 
     # bin_results is already real, image-domain, channel-combined: (nx_crop, ny, nbins, neco)
     # no further ifftdim needed here -- that was a leftover from the old single-call version
@@ -349,6 +349,6 @@ for slc in slices_to_process:
 
     # save results as nifti
     final = nib.Nifti1Image(mag_combined, np.eye(4))
-    nib.save(final, f'{slc}_recon_result_{nbins}_{r}_{niters}.nii.gz')
+    nib.save(final, f'{slc}_recon_result_{nbins}_{r}_{niters}_random.nii.gz')
 
 print("reconstruction finished!")
