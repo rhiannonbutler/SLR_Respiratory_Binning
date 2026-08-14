@@ -254,7 +254,7 @@ for slc in slices_to_process:
     # tmp = np.angle(tmp)
 
     # get k-means cluster indices, with nbins clusters
-    idx = sklearn.cluster.KMeans(n_clusters=nbins, random_state=42).fit(
+    idx_kmeans = sklearn.cluster.KMeans(n_clusters=nbins, random_state=42).fit(
         tmp.reshape((-1, tmp.shape[-1]))).labels_.reshape((nrep, -1))
     print("shuffling k-means cluster indices")
     idx_flat = idx_kmeans.ravel()
