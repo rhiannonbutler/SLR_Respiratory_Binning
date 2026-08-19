@@ -219,6 +219,7 @@ ref_nav = ref_nav
 W = np.linalg.cholesky(np.linalg.inv(np.cov(np.reshape(map[0]['noise'][:].squeeze().transpose((1,0,2)),(nc,-1)))))
 
 img = np.tensordot(img, W, axes=((-2,),(0)))
+print(img.shape)
 ref = np.tensordot(ref, W, axes=((-2,),(0)))
 img_nav = np.tensordot(img_nav, W, axes=((-2,),(0)))
 ref_nav = np.tensordot(ref_nav, W, axes=((-2,),(0)))
@@ -305,12 +306,18 @@ for slc in slices_to_process:
         line_idx = 0  # Index of the repetition/line you want to inspect
 
         # 1. Navigator line already in image domain (from ifftdim along RO dimension)
-        # Average across SC region or select center channel for a 1D magnitude profile
-        nav_profile = np.abs(np.mean(nav[line_idx, :, :, :], axis=(-1, -2)))
+        # 1. Navigator line (averaged across channels)
+        nav_profile = np.abs(
+            np.mean(nav[line_idx, :, sc_idx, :], axis=-1)
+        )  # shape: (n_lines, len(sc_idx)) -> pick one line if needed
 
-        # 2. Extract corresponding image k-space line and IFFT to image domain
-        # Shape: img[nrep, nc, slc, ny, neco, nx] -> transform RO dimension (axis=-1)
-        img_line_kspace = img[line_idx, 0, slc, 0, 0, :]  # Rep 0, coil 0, echo 0
+        # 2. Extract corresponding image line dynamically matching line_idx
+        # Assuming line_idx maps to your repetition/phase-encode loop:
+        # e.g., mapping line_idx into the image ny and repetition dimensions
+        i_rep = line_idx // (ny // R)
+        j_pe = line_idx % (ny // R)
+
+        img_line_kspace = img[i_rep, 0, slc, R * j_pe, sc_idx, 0]
         img_line_imdom = np.abs(
             np.fft.fftshift(np.fft.ifft(np.fft.ifftshift(img_line_kspace)))
         )
