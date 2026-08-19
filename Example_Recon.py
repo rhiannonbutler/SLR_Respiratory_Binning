@@ -241,142 +241,95 @@ else:
 for slc in slices_to_process:
     init = init_all[slc, :, :, :, :]
     print("processing slice:", slc)
+
     # reference everything relative to the first line, and average the relative signals across coil channels
     # concatenate navigators, and inverse FFT navigators along RO dimension
     # use only sampled lines, to avoid an extra trivial cluster from the empty lines
-    nav = ifftdim(np.concatenate((img_nav[:,slc,::R,:,:], ref_nav[:,slc,:,:,:]), axis=1), dims=(-2,))
-
-
+    nav = ifftdim(np.concatenate((img_nav[:, slc, ::R, :, :], ref_nav[:, slc, :, :, :]), axis=1), dims=(-2,))
     tmp = nav[:, :, sc_idx, :]
-    tmp = np.squeeze(np.mean(tmp*np.conj(tmp[:,[0],:,:]), axis=-1))
-
+    tmp = np.squeeze(np.mean(tmp * np.conj(tmp[:, [0], :, :]), axis=-1))
     # because sk-learn k-means requires real-valued input, I've concatenated the real and imaginary parts of the navigator
     tmp = np.concatenate((np.real(tmp), np.imag(tmp)), axis=-1)
-
     # alternatively, you could try extracting just the phase of the navigator
-    #tmp = np.angle(tmp)
-    # get k-means cluster indices, with nbins clusters
-    idx = sklearn.cluster.KMeans(n_clusters=nbins, random_state=42).fit(tmp.reshape((-1,tmp.shape[-1]))).labels_.reshape((nrep,-1))
-    #Prep binned data and initialization
+    # tmp = np.angle(tmp)
 
+    # get k-means cluster indices, with nbins clusters
+    idx = sklearn.cluster.KMeans(n_clusters=nbins, random_state=42).fit(tmp.reshape((-1, tmp.shape[-1]))).labels_.reshape((nrep, -1))
+
+
+    # Prep binned data and initialization
     # sort data into new bin dimension using k-means indices
     # the data across all repetitions is being used here, as well as the reference data
     # the cnt array just keeps track in case the same line appears in the same bin across repetitions
     # if this happens, we simply average the lines
     dat = np.zeros((nx, ny, nbins, neco, nc), dtype='complex64')
-
     cnt = np.zeros((nx, ny, nbins, neco, nc))
-    ref_offset = ny//2 - nref//2
-    for i in range(nrep): 
-        for j in range(ny//R):
-            dat[:, R*j, idx[i,j], :, :] += img[i, :, slc, R*j, :, :].transpose((1,0,2))
-            cnt[:, R*j, idx[i,j], :, :] += 1
+    ref_offset = ny // 2 - nref // 2
+    for i in range(nrep):
+        for j in range(ny // R):
+            dat[:, R * j, idx[i, j], :, :] += img[i, :, slc, R * j, :, :].transpose((1, 0, 2))
+            cnt[:, R * j, idx[i, j], :, :] += 1
         for k in range(nref):
-            dat[:, ref_offset+k, idx[i,ny//R+k], :, :] += ref[i, :, slc, k, :, :].transpose((1,0,2))
-            cnt[:, ref_offset+k, idx[i,ny//R+k], :, :] += 1    
-
-    dat[dat!=0] = dat[dat!=0]/cnt[dat!=0]
+            dat[:, ref_offset + k, idx[i, ny // R + k], :, :] += ref[i, :, slc, k, :, :].transpose((1, 0, 2))
+            cnt[:, ref_offset + k, idx[i, ny // R + k], :, :] += 1
+    dat[dat != 0] = dat[dat != 0] / cnt[dat != 0]
 
     # for the initalization, we just copy the GRAPPA recon across the bin dimension
-    init  = np.tile(init[:,:,:,None,:].transpose((1,2,3,4,0)),(1,1,nbins,1,1))
+    init = np.tile(init[:, :, :, None, :].transpose((1, 2, 3, 4, 0)), (1, 1, nbins, 1, 1))
+    # dat, init both: (nx, ny, nbins, neco, nc) -- kept 5D, NOT flattened here anymore,
+    # since we need the nbins axis intact for the per-bin loop below
 
-    # reshape input data and initialization to combine bin, eco and channel dimensions
-    dat = dat.reshape((nx, ny, -1))
-    init = init.reshape((nx, ny, -1))
-
-
-    #Crop RO dimension
+    # Crop RO dimension
     # choose RO indices to keep
     # this is not strictly necessary, but I recommend it, particularly if you used the cropped navigator for k-means clustering
     # image quality near the spinal cord will be better, because the SLR reconstruction doesn't have to "fit" the entire FOV all at once
-    # it is possible to do this, of course, but it requires a bit more tweaking of hyperparameters (kernel size, rank, etc.)
-    # if you do want a full FOV image, I would actually recommend trying to generate it with a series R0 cropped reconstructions, and combining afterwards
-    # an example of this is provided in Full_FOV_Recon.ipynb
     xidx = sc_idx
     nx_crop = len(xidx)
+    # ifft to x-dimension, crop, then fft back to kx -- dims=(0,) only touches the x axis,
+    # so this works fine directly on the full 5D arrays, no flattening needed first
+    dat = fftdim(ifftdim(dat, dims=(0,))[xidx, :, :, :, :], dims=(0,))
+    init = fftdim(ifftdim(init, dims=(0,))[xidx, :, :, :, :], dims=(0,))
 
-    # ifft to x-dimension, crop, the fft back to kx
-    # doing this both for the prepared data and the initialization
-    dat = fftdim(ifftdim(dat, dims=(0,))[xidx, :, :], dims=(0,))
-    init = fftdim(ifftdim(init, dims=(0,))[xidx, :, :], dims=(0,))
-
-
-    # ## Reconstruction
-    # There is a CPU version (SLR) and a GPU version (gpuSLR). Otherwise reconstruction function calls are very similar
-    
-    # The reconstruction uses an alternating direction method of multipliers (ADMM) optimization to solve the structured low-rank constrained reconstruction.
-    
-    # The third input parameter is the type of structured low-rank matrix formulation to use. There are several options:\
-    # `c_matrix`: the most basic, straightforward phase smoothness and limited image support constraint\
-    # `s_matrix`: everything c_matrix does, but additionally exploits some conjugate symmetry properties\
-    # `vcc_matrix`: similar to s_matrix, but formulated differently, using the virtual conjugate coil framework
-
-    # SLR reconstruction
-
-    # set rank parameter
-    # this is a bit tricky to tune - lower numbers will result in greater regularization
-    # set too low, signal loss in the output can results
-    # set too high, nothing really happens
-    # also, this number interacts with kernel size and type of SLR matrix. A larger kernel may require a larger r value to prevent over-regularization
-    r_single = args.r // neco
-
-    # set number of iterations
+    # ## Reconstruction (independent per-bin, to isolate cross-bin sharing)
+    r = args.r
     niters = args.iters
+    kernel = (5, 5)
 
-    # slr kernel size
-    kernel = (5,5)
-    # example gpu reconstruction using the c_matrix
-    out_echoes = []
+    # real magnitude, channel-combined -- no nc axis, since sos collapses it per bin below
+    eco_results = np.zeros((nx_crop, ny, nbins, neco), dtype='float32')
 
     for e in range(neco):
-        print(f"  --> Reconstructing Echo {e+1}/{neco} (Rank r={r_single})...")
-        
-        # Extract 4D array for current echo: (nx_crop, ny, nbins, nc)
-        dat_e = dat[:, :, :, e, :]
-        init_e = init[:, :, :, e, :]
-        
-        # Reshape to combine bin and channel dimensions: (nx_crop, ny, nbins * nc)
-        dat_e = dat_e.reshape((nx_crop, ny, -1))
-        init_e = init_e.reshape((nx_crop, ny, -1))
-        
-        # Run ADMM SLR solver per echo
+        dat_eco = dat[:, :, :, e, :].reshape((nx_crop, ny, -1))
+        init_eco = init[:, :, :, e, :].reshape((nx_crop, ny, -1))
+
         if HAS_GPU:
-            out_e = gpuSLR.ADMM(dat_e, gpuSLR.c_matrix, kernel, r_single, niters=niters, init=init_e)
+            out = gpuSLR.ADMM(dat_eco,
+                               gpuSLR.c_matrix,
+                               kernel,
+                               r,
+                               niters=niters,
+                               init=init_eco)          
         else:
-            out_e = SLR.ADMM(dat_e, SLR.c_matrix, kernel, r_single, niters=niters, init=init_e)
-            
-        # Reshape back to 4D: (nx_crop, ny, nbins, nc)
-        out_e = out_e.reshape((nx_crop, ny, nbins, nc))
-        out_echoes.append(out_e)
+            out = SLR.ADMM(dat_eco, SLR.c_matrix, kernel, r, niters=niters, init=init_eco)
 
-    # Stack echoes along echo axis -> (nx_crop, ny, nbins, neco, nc)
-    out_all = np.stack(out_echoes, axis=3)
+        out_b = out.reshape((nx_crop, ny, neco, nc))
+        mag_b = ifftdim(out_b, dims=(0, 1))
+        eco_results[:, :, e, :] = sos(mag_b, axis=-1)  
 
-    mag = ifftdim(out_all, dims=(0, 1))
+        nib.save(nib.Nifti1Image(eco_results[:, :, e, :], affine),
+                 f'{slc}_eco_{e}_result_{nbins}_{r}_{niters}_resp.nii.gz')
 
-    # Reorder to (nx_crop, ny, neco, nbins, nc) to isolate echoes
-    mag = mag.transpose((0, 1, 3, 2, 4))
-    
-    # Root-sum-of-squares combination across channels and dynamic bins
-    # Output shape: (nx_crop, ny, neco)
-    mag_echoes = sos(mag.reshape((nx_crop, ny, neco, -1)), axis=-1)
+    # eco_results is already real, image-domain, channel-combined: (nx_crop, ny, nbins, neco)
+    # no further ifftdim needed here -- that was a leftover from the old single-call version
+    mag = eco_results
 
-    for e in range(neco):
-        echo_slice = mag_echoes[:, :, e]
-        nifti_single_echo = nib.Nifti1Image(echo_slice, affine)
-        filename_single = f"slc_{slc}_echo_{e}_nbins_{nbins}_r_{r_single}_iters_{niters}.nii.gz"
-        nib.save(nifti_single_echo, filename_single)
-        print(f"  Saved individual echo: {filename_single}")
+    # typically for magnitude images, we would sos-combine the bin and channel dimensions
+    # channels are already combined per-bin above; this step sos-combines just the bin dimension,
+    # keeping echoes separate so contrast differences across echoes remain visible
+    mag_combined = sos(mag.transpose((0, 1, 3, 2)), axis=-1)  # (nx_crop, ny, nbins, neco) -> (nx_crop, ny, neco)
 
-    nifti_3d_volume = nib.Nifti1Image(mag_echoes, affine)
-    filename_3d = f"slc_{slc}_all_echoes_nbins_{nbins}_r_{r_single}_iters_{niters}.nii.gz"
-    nib.save(nifti_3d_volume, filename_3d)
-    print(f"  Saved full multi-echo volume: {filename_3d}")
-
-    composite_4echo = sos(mag_echoes, axis=-1)  # shape: (nx_crop, ny)
-    nifti_composite = nib.Nifti1Image(composite_4echo, affine)
-    filename_composite = f"slc_{slc}_composite_SoS_nbins_{nbins}_r_{r_single}.nii.gz"
-    nib.save(nifti_composite, filename_composite)
-    print(f"  Saved composite 4-echo image: {filename_composite}")          
+    # save results as nifti
+    final = nib.Nifti1Image(mag_combined, np.eye(4))
+    nib.save(final, f'{slc}_recon_result_{nbins}_{r}_{niters}_seperate_echoes.nii.gz')
 
 print("reconstruction finished!")
