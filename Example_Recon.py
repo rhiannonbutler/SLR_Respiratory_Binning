@@ -122,7 +122,8 @@ parser.add_argument('--sct_crop', action="store_false", help='use sct segmentati
 parser.add_argument('--i', type=str, required=True, help='.dat file containing the raw kspace data to be reconstructed')
 parser.add_argument('--iters', type=int, default=100, help='number of iterations for the reconstruction')
 parser.add_argument('--mode', type=str, default=None, help='reconstruction mode (hard or soft). default is hard.')
-parser.add_argument('--lam', type=int, default=5.7, help='lambda parameter for soft thresholding. default is 5.7.')
+parser.add_argument('--lam', type=float, default=5.7, help='lambda parameter for soft thresholding. default is 5.7.')
+parser.add_argument('--plot_nav', type=bool, default=False, help='reconstruction mode (hard or soft). default is hard.')
 args = parser.parse_args()
 
 
@@ -299,6 +300,46 @@ for slc in slices_to_process:
     # use only sampled lines, to avoid an extra trivial cluster from the empty lines
     nav = ifftdim(np.concatenate((img_nav[:,slc,::R,:,:], ref_nav[:,slc,:,:,:]), axis=1), dims=(-2,))
 
+    if args.plot_nav == True:
+        print('plotting navigators...')
+        line_idx = 0  # Index of the repetition/line you want to inspect
+
+        # 1. Navigator line already in image domain (from ifftdim along RO dimension)
+        # Average across SC region or select center channel for a 1D magnitude profile
+        nav_profile = np.abs(np.mean(nav[line_idx, :, :, :], axis=(-1, -2)))
+
+        # 2. Extract corresponding image k-space line and IFFT to image domain
+        # Shape: img[nrep, nc, slc, ny, neco, nx] -> transform RO dimension (axis=-1)
+        img_line_kspace = img[line_idx, 0, slc, 0, 0, :]  # Rep 0, coil 0, echo 0
+        img_line_imdom = np.abs(
+            np.fft.fftshift(np.fft.ifft(np.fft.ifftshift(img_line_kspace)))
+        )
+
+        # 3. Plot both magnitude profiles
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(10, 3.5))
+
+        ax1.plot(nav_profile, color='crimson')
+        ax1.set_title(f'Navigator Line {line_idx} (Image Domain)')
+        ax1.set_xlabel('Readout (RO) Index')
+        ax1.set_ylabel('Magnitude')
+        ax1.grid(True, alpha=0.3)
+
+        ax2.plot(img_line_imdom, color='navy')
+        ax2.set_title(f'Image Line {line_idx} (Image Domain)')
+        ax2.set_xlabel('Readout (RO) Index')
+        ax2.set_ylabel('Magnitude')
+        ax2.grid(True, alpha=0.3)
+
+        plt.tight_layout()
+        plt.savefig(
+            f'slice_{slc}_line_{line_idx}_nav_vs_img.png',
+            dpi=150,
+            bbox_inches='tight',
+        )
+        plt.close(fig)
+        print(
+            f'Saved line profile comparison to slice_{slc}_line_{line_idx}_nav_vs_img.png'
+        )
 
     tmp = nav[:, :, sc_idx, :]
     tmp_complex = np.squeeze(np.mean(tmp*np.conj(tmp[:,[0],:,:]), axis=-1))
