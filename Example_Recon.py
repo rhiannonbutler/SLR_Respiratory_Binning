@@ -319,31 +319,39 @@ for slc in slices_to_process:
     # if this happens, we simply average the lines
     dat = np.zeros((nx, ny, nbins, neco, nc), dtype='complex64')
     cnt = np.zeros((nx, ny, nbins, neco, nc))
-    ref_offset = ny // 2 - nref // 2
-    for i in range(nrep):
-        for j in range(ny // R):
-            dat[:, R * j, idx[i, j], :, :] += img[i, :, slc, R * j, :, :].transpose((1, 0, 2))
-            cnt[:, R * j, idx[i, j], :, :] += 1
+    ref_offset = ny//2 - nref//2
+    for i in range(nrep): 
+        for j in range(ny//R):
+            dat[:, R*j, idx[i,j], :, :] += img[i, :, slc, R*j, :, :].transpose((1,0,2))
+            cnt[:, R*j, idx[i,j], :, :] += 1
         for k in range(nref):
-            dat[:, ref_offset + k, idx[i, ny // R + k], :, :] += ref[i, :, slc, k, :, :].transpose((1, 0, 2))
-            cnt[:, ref_offset + k, idx[i, ny // R + k], :, :] += 1
-    dat[dat != 0] = dat[dat != 0] / cnt[dat != 0]
+            dat[:, ref_offset+k, idx[i,ny//R+k], :, :] += ref[i, :, slc, k, :, :].transpose((1,0,2))
+            cnt[:, ref_offset+k, idx[i,ny//R+k], :, :] += 1    
+
+    dat[dat!=0] = dat[dat!=0]/cnt[dat!=0]
 
     # for the initalization, we just copy the GRAPPA recon across the bin dimension
-    init = np.tile(init[:, :, :, None, :].transpose((1, 2, 3, 4, 0)), (1, 1, nbins, 1, 1))
-    # dat, init both: (nx, ny, nbins, neco, nc) -- kept 5D, NOT flattened here anymore,
-    # since we need the nbins axis intact for the per-bin loop below
+    init  = np.tile(init[:,:,:,None,:].transpose((1,2,3,4,0)),(1,1,nbins,1,1))
 
-    # Crop RO dimension
+    # reshape input data and initialization to combine bin, eco and channel dimensions
+    dat = dat.reshape((nx, ny, -1))
+    init = init.reshape((nx, ny, -1))
+
+
+    #Crop RO dimension
     # choose RO indices to keep
     # this is not strictly necessary, but I recommend it, particularly if you used the cropped navigator for k-means clustering
     # image quality near the spinal cord will be better, because the SLR reconstruction doesn't have to "fit" the entire FOV all at once
+    # it is possible to do this, of course, but it requires a bit more tweaking of hyperparameters (kernel size, rank, etc.)
+    # if you do want a full FOV image, I would actually recommend trying to generate it with a series R0 cropped reconstructions, and combining afterwards
+    # an example of this is provided in Full_FOV_Recon.ipynb
     xidx = sc_idx
     nx_crop = len(xidx)
-    # ifft to x-dimension, crop, then fft back to kx -- dims=(0,) only touches the x axis,
-    # so this works fine directly on the full 5D arrays, no flattening needed first
-    dat = fftdim(ifftdim(dat, dims=(0,))[nx_crop, :, :], dims=(0,))
-    init = fftdim(ifftdim(init, dims=(0,))[nx_crop, :, :], dims=(0,))
+
+    # ifft to x-dimension, crop, the fft back to kx
+    # doing this both for the prepared data and the initialization
+    dat = fftdim(ifftdim(dat, dims=(0,))[xidx, :, :], dims=(0,))
+    init = fftdim(ifftdim(init, dims=(0,))[xidx, :, :], dims=(0,))
 
 
     # ## Reconstruction
@@ -388,6 +396,12 @@ for slc in slices_to_process:
     # use the reconstructed result, not the initialization, so nbins changes are visible
     mag = ifftdim(out.reshape((nx_crop, ny, nbins, neco, nc)), dims=(0,1))
 
+    for k in range(nbins):
+        bin_mag = sos(mag[:, :, k, :, :], axis=-1)
+        
+        # Save using proper orientation affine
+        nib.save(nib.Nifti1Image(bin_mag, affine), f'{slc}_bin_{k}_result_{nbins}_{r}_{niters}.nii.gz')
+
     # typically for magnitude images, we would sos-combine the bin and channel dimensions
     # this is not necessary, you can keep the bin-dimension uncombined and do something else if you like
     # the bin dimension resolves the different navigator states
@@ -404,6 +418,6 @@ for slc in slices_to_process:
     #TO DO: SAVE DICOMS INSTEAD
     # save results as nifti
     final = nib.Nifti1Image(mag, np.eye(4))
-    nib.save(final, f'{slc}_recon_result_{nbins}_{r}_{niters}.nii.gz')
+    nib.save(final, f'{slc}_recon_result_{nbins}_{r}_{niters}_random.nii.gz')
 
 print("reconstruction finished!")
