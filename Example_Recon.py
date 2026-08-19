@@ -295,41 +295,51 @@ for slc in slices_to_process:
     niters = args.iters
     kernel = (5, 5)
 
-    # real magnitude, channel-combined -- no nc axis, since sos collapses it per bin below
+    # Array shape: (nx_crop, ny, nbins, neco)
     eco_results = np.zeros((nx_crop, ny, nbins, neco), dtype='float32')
 
     for e in range(neco):
+        # Shape per echo: (nx_crop, ny, nbins * nc)
         dat_eco = dat[:, :, :, e, :].reshape((nx_crop, ny, -1))
         init_eco = init[:, :, :, e, :].reshape((nx_crop, ny, -1))
 
         if HAS_GPU:
-            out = gpuSLR.ADMM(dat_eco,
-                               gpuSLR.c_matrix,
-                               kernel,
-                               r,
-                               niters=niters,
-                               init=init_eco)          
+            out = gpuSLR.ADMM(
+                dat_eco,
+                gpuSLR.c_matrix,
+                kernel,
+                r,
+                niters=niters,
+                init=init_eco,
+            )
         else:
-            out = SLR.ADMM(dat_eco, SLR.c_matrix, kernel, r, niters=niters, init=init_eco)
+            out = SLR.ADMM(
+                dat_eco, SLR.c_matrix, kernel, r, niters=niters, init=init_eco
+            )
 
-        out_b = out.reshape((nx_crop, ny, neco, nc))
+        out_b = out.reshape((nx_crop, ny, nbins, nc))
         mag_b = ifftdim(out_b, dims=(0, 1))
-        eco_results[:, :, e, :] = sos(mag_b, axis=-1)  
 
-        nib.save(nib.Nifti1Image(eco_results[:, :, e, :], affine),
-                 f'{slc}_eco_{e}_result_{nbins}_{r}_{niters}_resp.nii.gz')
+        eco_results[:, :, :, e] = sos(mag_b, axis=-1)
 
-    # eco_results is already real, image-domain, channel-combined: (nx_crop, ny, nbins, neco)
-    # no further ifftdim needed here -- that was a leftover from the old single-call version
-    mag = eco_results
+        # Save NIfTI for echo 'e' (contains all nbins)
+        nib.save(
+            nib.Nifti1Image(eco_results[:, :, :, e], affine),
+            f'{slc}_eco_{e}_result_{nbins}_{r}_{niters}_resp.nii.gz',
+        )
 
-    # typically for magnitude images, we would sos-combine the bin and channel dimensions
-    # channels are already combined per-bin above; this step sos-combines just the bin dimension,
-    # keeping echoes separate so contrast differences across echoes remain visible
-    mag_combined = sos(mag.transpose((0, 1, 3, 2)), axis=-1)  # (nx_crop, ny, nbins, neco) -> (nx_crop, ny, neco)
+    mag = eco_results  # shape: (nx_crop, ny, nbins, neco)
 
-    # save results as nifti
+    # Collapse bin dimension via Root-Sum-of-Squares while keeping echoes separate
+    mag_combined = sos(
+        mag.transpose((0, 1, 3, 2)), axis=-1
+    )  # shape: (nx_crop, ny, neco)
+
+    # Save final echo-separated combined NIfTI
     final = nib.Nifti1Image(mag_combined, np.eye(4))
-    nib.save(final, f'{slc}_recon_result_{nbins}_{r}_{niters}_seperate_echoes.nii.gz')
+    nib.save(
+        final,
+        f'{slc}_recon_result_{nbins}_{r}_{niters}_separate_echoes.nii.gz',
+    )
 
 print("reconstruction finished!")
