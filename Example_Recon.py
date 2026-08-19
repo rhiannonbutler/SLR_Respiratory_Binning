@@ -307,18 +307,13 @@ for slc in slices_to_process:
 
         # 1. Navigator line already in image domain (from ifftdim along RO dimension)
         # 1. Navigator line (averaged across channels)
-        nav_profile = np.abs(
-            np.mean(nav[line_idx, :, sc_idx, :], axis=-1)
-        )  # shape: (n_lines, len(sc_idx)) -> pick one line if needed
+        nav_profile = np.angle(
+            np.mean(nav[line_idx, line_idx, sc_idx, :], axis=-1)
+        )
 
-        # 2. Extract corresponding image line dynamically matching line_idx
-        # Assuming line_idx maps to your repetition/phase-encode loop:
-        # e.g., mapping line_idx into the image ny and repetition dimensions
-        i_rep = line_idx // (ny // R)
-        j_pe = line_idx % (ny // R)
-
-        img_line_kspace = img[i_rep, 0, slc, R * j_pe, sc_idx, 0]
-        img_line_imdom = np.abs(
+        # Extract matching image k-space line
+        img_line_kspace = img[line_idx, 0, slc, 0, sc_idx, 0]
+        img_line_imdom = np.angle(
             np.fft.fftshift(np.fft.ifft(np.fft.ifftshift(img_line_kspace)))
         )
 
@@ -328,13 +323,13 @@ for slc in slices_to_process:
         ax1.plot(nav_profile, color='crimson')
         ax1.set_title(f'Navigator Line {line_idx} (Image Domain)')
         ax1.set_xlabel('Readout (RO) Index')
-        ax1.set_ylabel('Magnitude')
+        ax1.set_ylabel('Phase')
         ax1.grid(True, alpha=0.3)
 
         ax2.plot(img_line_imdom, color='navy')
         ax2.set_title(f'Image Line {line_idx} (Image Domain)')
         ax2.set_xlabel('Readout (RO) Index')
-        ax2.set_ylabel('Magnitude')
+        ax2.set_ylabel('Phase')
         ax2.grid(True, alpha=0.3)
 
         plt.tight_layout()
