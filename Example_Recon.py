@@ -121,7 +121,8 @@ parser.add_argument('--nbins', type=int, default=4, help='number of navigator bi
 parser.add_argument('--sct_crop', action="store_false", help='use sct segmentation cropping instead of hardcoded indices')
 parser.add_argument('--i', type=str, required=True, help='.dat file containing the raw kspace data to be reconstructed')
 parser.add_argument('--iters', type=int, default=100, help='number of iterations for the reconstruction')
-parser.add_argument('--mode', type=str, default=None, help='reconstruction mode (hard or soft)')
+parser.add_argument('--mode', type=str, default=None, help='reconstruction mode (hard or soft). default is hard.')
+parser.add_argument('--lam', type=int, default=5.7, help='lambda parameter for soft thresholding. default is 5.7.')
 args = parser.parse_args()
 
 
@@ -372,6 +373,7 @@ for slc in slices_to_process:
     # set too high, nothing really happens
     # also, this number interacts with kernel size and type of SLR matrix. A larger kernel may require a larger r value to prevent over-regularization
     r = args.r
+    lam = args.lam
 
     # set number of iterations
     niters = args.iters
@@ -381,7 +383,7 @@ for slc in slices_to_process:
     # example gpu reconstruction using the c_matrix
     if HAS_GPU:
         if args.mode is not None:
-            out = gpuSLR.ADMM(dat, gpuSLR.c_matrix, kernel, r, niters=niters, init=init, mode=args.mode)
+            out = gpuSLR.ADMM(dat, gpuSLR.c_matrix, kernel, lam, niters=niters, init=init, mode=args.mode)
         else:   
             out = gpuSLR.ADMM(dat,              # input data
                             gpuSLR.c_matrix,    # type of structured low-rank matrix. options are `c_matrix`, `s_matrix` or `vcc_matrix`
@@ -391,7 +393,7 @@ for slc in slices_to_process:
                             init=init)          # initialization (defaults to array of zeros)
     else:
         if args.mode is not None:
-            out = SLR.ADMM(dat, SLR.c_matrix, kernel, r, niters=niters, init=init, mode=args.mode)
+            out = SLR.ADMM(dat, SLR.c_matrix, kernel, lam, niters=niters, init=init, mode=args.mode)
         else:
             # similar reconstruction using cpu
             out = SLR.ADMM(dat, SLR.c_matrix, kernel, r, niters=niters, init=init)
