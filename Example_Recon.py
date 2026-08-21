@@ -35,8 +35,10 @@ import twixtools # for reading/loading raw twix data
 import sklearn   # used only for k-means 
 import grappa    # grappa for computing initialization
 import get_spinal_cord_crop_indices
+import time
+from scipy.linalg import hankel
 
-
+print("running new recon")
 
 # Define some helper functions
 
@@ -350,7 +352,7 @@ for slc in slices_to_process:
     tmp = np.concatenate((np.real(tmp_complex), np.imag(tmp_complex)), axis=-1)
 
     # alternatively, you could try extracting just the phase of the navigator
-    tmp = np.angle(tmp_complex)
+    #tmp = np.angle(tmp_complex)
     # get k-means cluster indices, with nbins clusters
     idx = sklearn.cluster.KMeans(n_clusters=nbins, random_state=42).fit(tmp.reshape((-1,tmp.shape[-1]))).labels_.reshape((nrep,-1))
     plot_navigator_clusters(tmp_complex, idx, slc, nbins)
@@ -424,6 +426,7 @@ for slc in slices_to_process:
     # slr kernel size
     kernel = (5,5)
     # example gpu reconstruction using the c_matrix
+    start_time = time.perf_counter()
     if HAS_GPU:
         if args.mode is not None:
             out = gpuSLR.ADMM(dat, gpuSLR.c_matrix, kernel, lam, niters=niters, init=init, mode=args.mode)
@@ -441,6 +444,8 @@ for slc in slices_to_process:
             # similar reconstruction using cpu
             out = SLR.ADMM(dat, SLR.c_matrix, kernel, r, niters=niters, init=init)
 
+    elapsed_time = time.perf_counter() - start_time
+    print(f'ADMM Converged in {elapsed_time:.2f} seconds ({niters} iterations)')
 
     # Plot results
     # reshape and ifftdim output 
@@ -466,7 +471,6 @@ for slc in slices_to_process:
         ax[i].imshow(np.rot90(mag[:,y_vis,i]), vmin=0, vmax=np.max(mag)*.8, cmap='gray')
         ax[i].set_title(f'Recon Echo {i}')
 
-    #TO DO: SAVE DICOMS INSTEAD
     # save results as nifti
     final = nib.Nifti1Image(mag, np.eye(4))
     nib.save(final, f'{slc}_recon_result_{nbins}_{r}_{niters}.nii.gz')
