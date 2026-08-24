@@ -271,7 +271,7 @@ img_3d_full = np.clip(img_3d_full, 0, None)
 
 
 # select RO indices near the spinal cord, as we only care about that region
-sct_crop = args.sct_crop
+sct_crop = args.manual_crop
 print("cropping around spinal cord")
 if sct_crop:
     x_idx, y_idx = get_spinal_cord_crop_indices.get_indices(
