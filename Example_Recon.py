@@ -461,8 +461,7 @@ for slc in slices_to_process:
     # typically for magnitude images, we would sos-combine the bin and channel dimensions
     # this is not necessary, you can keep the bin-dimension uncombined and do something else if you like
     # the bin dimension resolves the different navigator states
-    mag = sos(mag.transpose((0,1,3,2,4)).reshape((nx_crop, ny, neco, -1))) #maybe need to change this to neco
-
+    mag = sos(mag.transpose((0,1,3,2,4)).reshape((nx_crop, ny, neco, -1))) 
     y_vis = np.arange(96,224)
 
     # plot all magnitude of all echoes
