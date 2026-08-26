@@ -122,7 +122,7 @@ parser.add_argument('--r', type=int, default=150, help='rank parameter for the S
 parser.add_argument('--nbins', type=int, default=4, help='number of navigator bins for the reconstruction')
 parser.add_argument('--manual_crop', action="store_false", help='use sct segmentation cropping instead of hardcoded indices')
 parser.add_argument('--i', type=str, required=True, help='.dat file containing the raw kspace data to be reconstructed')
-parser.add_argument('--iters', type=int, default=100, help='number of iterations for the reconstruction')
+parser.add_argument('--niters', type=int, default=100, help='number of iterations for the reconstruction')
 parser.add_argument('--mode', type=str, default=None, help='reconstruction mode (hard or soft). default is hard.')
 parser.add_argument('--lam', type=float, default=5.7, help='lambda parameter for soft thresholding. default is 5.7.')
 parser.add_argument('--plot_nav', type=bool, default=False, help='reconstruction mode (hard or soft). default is hard.')
