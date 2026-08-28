@@ -421,7 +421,7 @@ for slc in slices_to_process:
     lam = args.lam
 
     # set number of iterations
-    niters = args.iters
+    niters = args.niters
 
     # slr kernel size
     kernel = (5,5)
@@ -431,12 +431,12 @@ for slc in slices_to_process:
         if args.mode is not None:
             out = gpuSLR.ADMM(dat, gpuSLR.c_matrix, kernel, lam, niters=niters, init=init, mode=args.mode)
         else:   
+            print("running SLR recon with zeros as initialization...")
             out = gpuSLR.ADMM(dat,              # input data
                             gpuSLR.c_matrix,    # type of structured low-rank matrix. options are `c_matrix`, `s_matrix` or `vcc_matrix`
                             kernel,             # SLR kernel size
                             r,                  # rank (d
-                            niters=niters,      # number of iterations (default 100)
-                            init=init)          # initialization (defaults to array of zeros)
+                            niters=niters)      # initialization (defaults to array of zeros)
     else:
         if args.mode is not None:
             out = SLR.ADMM(dat, SLR.c_matrix, kernel, lam, niters=niters, init=init, mode=args.mode)
